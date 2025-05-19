@@ -574,8 +574,8 @@
         const uiController = UIController.init();
         const routeController = RouteController.init(mapController, uiController);
         
-        // Complete the initialization by passing routeController to uiController
-        uiController.init(routeController);
+        // Bind UI events to the route controller
+        uiController.bindEvents(routeController);
       });
     })();
   </script>
