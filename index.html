@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RouteSketch - Dead-Simple Running Route Creator</title>
+  <meta name="description" content="Create running routes quickly with no login required">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+  <style>
+    /* Reset and base styles */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+    
+    /* App layout */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+    
+    #map {
+      flex: 1;
+      width: 100%;
+      z-index: 1;
+    }
+    
+    /* Toolbar styles */
+    .toolbar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .toolbar__row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    
+    .toolbar__button {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 8px 12px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+    }
+    
+    .toolbar__button:hover {
+      background: #f0f0f0;
+    }
+    
+    .toolbar__button:active {
+      background: #e0e0e0;
+    }
+    
+    .toolbar__button--primary {
+      background: #ff4500;
+      color: white;
+      border-color: #ff4500;
+    }
+    
+    .toolbar__button--primary:hover {
+      background: #e03e00;
+    }
+    
+    .toolbar__button--primary:active {
+      background: #cc3700;
+    }
+    
+    .toolbar__button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: #f0f0f0;
+    }
+    
+    /* Distance display */
+    .distance-display {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+      padding: 10px 15px;
+      font-size: 16px;
+      font-weight: 500;
+    }
+    
+    /* Unit toggle */
+    .unit-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    
+    .unit-toggle__label {
+      font-size: 14px;
+    }
+    
+    .unit-toggle__switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+    }
+    
+    .unit-toggle__switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .unit-toggle__slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 24px;
+    }
+    
+    .unit-toggle__slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .unit-toggle__slider {
+      background-color: #2196F3;
+    }
+    
+    input:checked + .unit-toggle__slider:before {
+      transform: translateX(26px);
+    }
+    
+    /* Cursor styles */
+    .cursor-crosshair {
+      cursor: crosshair !important;
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 600px) {
+      .toolbar {
+        padding: 8px;
+      }
+      
+      .toolbar__button {
+        padding: 6px 10px;
+        font-size: 13px;
+      }
+      
+      .distance-display {
+        padding: 8px 12px;
+        font-size: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="map"></div>
+    
+    <div class="toolbar">
+      <div class="toolbar__row">
+        <button id="create-route-btn" class="toolbar__button toolbar__button--primary" aria-label="Create Route">
+          Create Route
+        </button>
+        <button id="undo-btn" class="toolbar__button" aria-label="Undo Last Point" disabled>
+          Undo
+        </button>
+        <button id="clear-btn" class="toolbar__button" aria-label="Clear Route" disabled>
+          Clear
+        </button>
+      </div>
+      <div class="toolbar__row unit-toggle">
+        <span class="unit-toggle__label">KM</span>
+        <label class="unit-toggle__switch">
+          <input type="checkbox" id="unit-toggle">
+          <span class="unit-toggle__slider"></span>
+        </label>
+        <span class="unit-toggle__label">MI</span>
+      </div>
+    </div>
+    
+    <div class="distance-display" aria-live="polite">
+      <span id="distance-value">0.00</span>
+      <span id="distance-unit">mi</span>
+    </div>
+  </div>
+
+  <!-- Load libraries from CDN -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <!-- Main application code -->
+  <script>
+    (function() {
+      'use strict';
+      
+      // ===== MapController =====
+      // Handles map initialization and click events
+      const MapController = {
+        map: null,
+        markers: [],
+        polyline: null,
+        clickHandler: null,
+        
+        init() {
+          // Initialize the map centered on a default location (will be updated with geolocation)
+          this.map = L.map('map').setView([40.7128, -74.0060], 13);
+          
+          // Add OpenStreetMap tiles
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+          }).addTo(this.map);
+          
+          // Try to get user's location and center map there
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              (position) => {
+                const { latitude, longitude } = position.coords;
+                this.map.setView([latitude, longitude], 14);
+              },
+              (error) => {
+                console.log('Geolocation error:', error);
+                // Keep default location if geolocation fails
+              }
+            );
+          }
+          
+          // Initialize polyline
+          this.polyline = L.polyline([], {
+            color: '#ff4500',
+            weight: 5,
+            opacity: 0.7
+          }).addTo(this.map);
+          
+          return this;
+        },
+        
+        enableClicks(callback) {
+          this.clickHandler = callback;
+          this.map.on('click', this._handleMapClick.bind(this));
+          document.getElementById('map').classList.add('cursor-crosshair');
+        },
+        
+        disableClicks() {
+          this.map.off('click', this._handleMapClick.bind(this));
+          document.getElementById('map').classList.remove('cursor-crosshair');
+          this.clickHandler = null;
+        },
+        
+        _handleMapClick(e) {
+          if (this.clickHandler) {
+            this.clickHandler(e.latlng);
+          }
+        },
+        
+        addMarker(latlng) {
+          const marker = L.marker(latlng).addTo(this.map);
+          this.markers.push(marker);
+          return marker;
+        },
+        
+        updatePolyline(points) {
+          this.polyline.setLatLngs(points);
+        },
+        
+        removeLastMarker() {
+          if (this.markers.length > 0) {
+            const marker = this.markers.pop();
+            this.map.removeLayer(marker);
+          }
+        },
+        
+        clearAllMarkers() {
+          this.markers.forEach(marker => this.map.removeLayer(marker));
+          this.markers = [];
+          this.polyline.setLatLngs([]);
+        }
+      };
+      
+      // ===== DistanceService =====
+      // Calculates route distance using turf.js
+      const DistanceService = {
+        calculate(points, units = 'imperial') {
+          if (points.length < 2) {
+            return 0;
+          }
+          
+          // Convert Leaflet LatLng objects to GeoJSON format for turf.js
+          const line = turf.lineString(points.map(p => [p.lng, p.lat]));
+          
+          // Calculate distance in kilometers
+          const distanceKm = turf.length(line, { units: 'kilometers' });
+          
+          // Convert to miles if imperial units are requested
+          return units === 'imperial' ? this.toMiles(distanceKm) : distanceKm;
+        },
+        
+        toMiles(km) {
+          return km * 0.621371;
+        },
+        
+        formatDistance(distance, units) {
+          return new Intl.NumberFormat(undefined, {
+            maximumFractionDigits: 2
+          }).format(distance);
+        }
+      };
+      
+      // ===== RouteController =====
+      // Manages route state and coordinates between components
+      const RouteController = {
+        state: {
+          points: [],
+          distanceMeters: 0,
+          units: 'imperial', // 'imperial' for miles, 'metric' for kilometers
+          createMode: false
+        },
+        
+        init(mapController, uiController) {
+          this.mapController = mapController;
+          this.uiController = uiController;
+          
+          // Try to restore state from sessionStorage
+          this._restoreState();
+          
+          return this;
+        },
+        
+        start() {
+          this.state.createMode = true;
+          this.mapController.enableClicks(this.addPoint.bind(this));
+          this.uiController.updateCreateButtonState(true);
+        },
+        
+        stop() {
+          this.state.createMode = false;
+          this.mapController.disableClicks();
+          this.uiController.updateCreateButtonState(false);
+        },
+        
+        addPoint(latlng) {
+          this.state.points.push(latlng);
+          this.mapController.addMarker(latlng);
+          this.mapController.updatePolyline(this.state.points);
+          
+          this._updateDistance();
+          this._saveState();
+          
+          this.uiController.updateUndoClearButtonState(this.state.points.length > 0);
+        },
+        
+        undo() {
+          if (this.state.points.length > 0) {
+            this.state.points.pop();
+            this.mapController.removeLastMarker();
+            this.mapController.updatePolyline(this.state.points);
+            
+            this._updateDistance();
+            this._saveState();
+            
+            this.uiController.updateUndoClearButtonState(this.state.points.length > 0);
+          }
+        },
+        
+        clear() {
+          if (window.confirm('Are you sure you want to clear the entire route?')) {
+            this.state.points = [];
+            this.mapController.clearAllMarkers();
+            
+            this._updateDistance();
+            this._saveState();
+            
+            this.uiController.updateUndoClearButtonState(false);
+          }
+        },
+        
+        toggleUnits() {
+          this.state.units = this.state.units === 'imperial' ? 'metric' : 'imperial';
+          this._updateDistance();
+          this._saveUnitPreference();
+        },
+        
+        _updateDistance() {
+          const distance = DistanceService.calculate(this.state.points, this.state.units);
+          this.uiController.updateDistance(
+            DistanceService.formatDistance(distance),
+            this.state.units === 'imperial' ? 'mi' : 'km'
+          );
+        },
+        
+        _saveState() {
+          // Convert LatLng objects to plain objects for storage
+          const pointsForStorage = this.state.points.map(p => ({ lat: p.lat, lng: p.lng }));
+          
+          try {
+            sessionStorage.setItem('routeSketch', JSON.stringify({
+              points: pointsForStorage
+            }));
+          } catch (e) {
+            console.error('Failed to save route to sessionStorage:', e);
+          }
+        },
+        
+        _saveUnitPreference() {
+          try {
+            localStorage.setItem('routeSketchUnit', this.state.units);
+          } catch (e) {
+            console.error('Failed to save unit preference:', e);
+          }
+        },
+        
+        _restoreState() {
+          // Restore unit preference
+          try {
+            const savedUnit = localStorage.getItem('routeSketchUnit');
+            if (savedUnit) {
+              this.state.units = savedUnit;
+              this.uiController.updateUnitToggle(savedUnit === 'imperial');
+            }
+          } catch (e) {
+            console.error('Failed to restore unit preference:', e);
+          }
+          
+          // Restore route points
+          try {
+            const savedState = sessionStorage.getItem('routeSketch');
+            if (savedState) {
+              const parsed = JSON.parse(savedState);
+              
+              if (parsed.points && Array.isArray(parsed.points)) {
+                // Convert plain objects back to LatLng objects
+                this.state.points = parsed.points.map(p => L.latLng(p.lat, p.lng));
+                
+                // Recreate markers and polyline
+                this.state.points.forEach(point => {
+                  this.mapController.addMarker(point);
+                });
+                
+                this.mapController.updatePolyline(this.state.points);
+                this._updateDistance();
+                
+                this.uiController.updateUndoClearButtonState(this.state.points.length > 0);
+              }
+            }
+          } catch (e) {
+            console.error('Failed to restore route from sessionStorage:', e);
+          }
+        }
+      };
+      
+      // ===== UIController =====
+      // Handles UI updates and event binding
+      const UIController = {
+        elements: {
+          createRouteBtn: null,
+          undoBtn: null,
+          clearBtn: null,
+          unitToggle: null,
+          distanceValue: null,
+          distanceUnit: null
+        },
+        
+        init(routeController) {
+          this.routeController = routeController;
+          
+          // Cache DOM elements
+          this.elements.createRouteBtn = document.getElementById('create-route-btn');
+          this.elements.undoBtn = document.getElementById('undo-btn');
+          this.elements.clearBtn = document.getElementById('clear-btn');
+          this.elements.unitToggle = document.getElementById('unit-toggle');
+          this.elements.distanceValue = document.getElementById('distance-value');
+          this.elements.distanceUnit = document.getElementById('distance-unit');
+          
+          // Bind event handlers
+          this.elements.createRouteBtn.addEventListener('click', this._handleCreateRouteClick.bind(this));
+          this.elements.undoBtn.addEventListener('click', this._handleUndoClick.bind(this));
+          this.elements.clearBtn.addEventListener('click', this._handleClearClick.bind(this));
+          this.elements.unitToggle.addEventListener('change', this._handleUnitToggleChange.bind(this));
+          
+          return this;
+        },
+        
+        updateCreateButtonState(isActive) {
+          if (isActive) {
+            this.elements.createRouteBtn.textContent = 'Stop Creating';
+            this.elements.createRouteBtn.classList.add('toolbar__button--active');
+          } else {
+            this.elements.createRouteBtn.textContent = 'Create Route';
+            this.elements.createRouteBtn.classList.remove('toolbar__button--active');
+          }
+        },
+        
+        updateUndoClearButtonState(enabled) {
+          this.elements.undoBtn.disabled = !enabled;
+          this.elements.clearBtn.disabled = !enabled;
+        },
+        
+        updateDistance(value, unit) {
+          this.elements.distanceValue.textContent = value;
+          this.elements.distanceUnit.textContent = unit;
+        },
+        
+        updateUnitToggle(isImperial) {
+          this.elements.unitToggle.checked = isImperial;
+        },
+        
+        _handleCreateRouteClick() {
+          if (this.routeController.state.createMode) {
+            this.routeController.stop();
+          } else {
+            this.routeController.start();
+          }
+        },
+        
+        _handleUndoClick() {
+          this.routeController.undo();
+        },
+        
+        _handleClearClick() {
+          this.routeController.clear();
+        },
+        
+        _handleUnitToggleChange(e) {
+          this.routeController.toggleUnits();
+        }
+      };
+      
+      // Initialize the application
+      document.addEventListener('DOMContentLoaded', () => {
+        const mapController = MapController.init();
+        const uiController = UIController.init();
+        const routeController = RouteController.init(mapController, uiController);
+        
+        uiController.init(routeController);
+      });
+    })();
+  </script>
+</body>
+</html>
