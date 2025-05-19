@@ -209,6 +209,14 @@
           Clear
         </button>
       </div>
+      <div class="toolbar__row">
+        <button id="export-gpx-btn" class="toolbar__button" aria-label="Export GPX" disabled>
+          Export GPX
+        </button>
+        <button id="import-gpx-btn" class="toolbar__button" aria-label="Import GPX">
+          Import GPX
+        </button>
+      </div>
       <div class="toolbar__row unit-toggle">
         <span class="unit-toggle__label">KM</span>
         <label class="unit-toggle__switch">
@@ -228,6 +236,9 @@
   <!-- Load libraries from CDN -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  
+  <!-- Hidden file input for GPX import -->
+  <input type="file" id="gpx-file-input" accept=".gpx" style="display: none;">
 
   <!-- Main application code -->
   <script>
@@ -318,6 +329,140 @@
         }
       };
       
+      // ===== GPXService =====
+      // Handles GPX file generation, parsing, and file operations
+      const GPXService = {
+        generateGPX(points) {
+          if (!points || points.length === 0) {
+            return null;
+          }
+          
+          // Create GPX header
+          let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+          gpx += '<gpx version="1.1" creator="RouteSketch" xmlns="http://www.topografix.com/GPX/1/1">\n';
+          gpx += '  <trk>\n';
+          gpx += '    <name>RouteSketch Track</name>\n';
+          gpx += '    <trkseg>\n';
+          
+          // Add track points
+          points.forEach(point => {
+            gpx += `      <trkpt lat="${point.lat}" lon="${point.lng}"></trkpt>\n`;
+          });
+          
+          // Close GPX structure
+          gpx += '    </trkseg>\n';
+          gpx += '  </trk>\n';
+          gpx += '</gpx>';
+          
+          return gpx;
+        },
+        
+        parseGPX(gpxString) {
+          try {
+            const parser = new DOMParser();
+            const gpxDoc = parser.parseFromString(gpxString, 'text/xml');
+            
+            // Check for parsing errors
+            const parserError = gpxDoc.querySelector('parsererror');
+            if (parserError) {
+              throw new Error('Invalid GPX file format');
+            }
+            
+            // Extract track points
+            const trackPoints = [];
+            const trkpts = gpxDoc.querySelectorAll('trkpt');
+            
+            if (trkpts.length === 0) {
+              // Try waypoints if no track points found
+              const wpts = gpxDoc.querySelectorAll('wpt');
+              if (wpts.length === 0) {
+                throw new Error('No track points or waypoints found in GPX file');
+              }
+              
+              // Extract waypoints
+              wpts.forEach(wpt => {
+                const lat = parseFloat(wpt.getAttribute('lat'));
+                const lon = parseFloat(wpt.getAttribute('lon'));
+                if (!isNaN(lat) && !isNaN(lon)) {
+                  trackPoints.push(L.latLng(lat, lon));
+                }
+              });
+            } else {
+              // Extract track points
+              trkpts.forEach(trkpt => {
+                const lat = parseFloat(trkpt.getAttribute('lat'));
+                const lon = parseFloat(trkpt.getAttribute('lon'));
+                if (!isNaN(lat) && !isNaN(lon)) {
+                  trackPoints.push(L.latLng(lat, lon));
+                }
+              });
+            }
+            
+            if (trackPoints.length === 0) {
+              throw new Error('No valid coordinates found in GPX file');
+            }
+            
+            return trackPoints;
+          } catch (error) {
+            console.error('GPX parsing error:', error);
+            throw error;
+          }
+        },
+        
+        downloadGPX(gpxString, filename) {
+          if (!gpxString) return;
+          
+          // Create blob and download link
+          const blob = new Blob([gpxString], { type: 'application/gpx+xml' });
+          const url = URL.createObjectURL(blob);
+          
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = filename || `routesketch_${new Date().toISOString().slice(0, 10)}.gpx`;
+          
+          // Trigger download
+          document.body.appendChild(a);
+          a.click();
+          
+          // Clean up
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 100);
+        },
+        
+        readGPXFile(file) {
+          return new Promise((resolve, reject) => {
+            if (!file) {
+              reject(new Error('No file provided'));
+              return;
+            }
+            
+            if (!file.name.toLowerCase().endsWith('.gpx')) {
+              reject(new Error('File must be a GPX file'));
+              return;
+            }
+            
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+              try {
+                resolve(e.target.result);
+              } catch (error) {
+                reject(error);
+              }
+            };
+            
+            reader.onerror = () => {
+              reject(new Error('Error reading file'));
+            };
+            
+            reader.readAsText(file);
+          });
+        }
+      };
+      
       // ===== DistanceService =====
       // Calculates route distance using turf.js
       const DistanceService = {
@@ -367,6 +512,67 @@
           return this;
         },
         
+        exportGPX() {
+          if (this.state.points.length === 0) {
+            alert('No route to export. Create a route first.');
+            return;
+          }
+          
+          try {
+            const gpxString = GPXService.generateGPX(this.state.points);
+            GPXService.downloadGPX(gpxString);
+          } catch (error) {
+            console.error('Failed to export GPX:', error);
+            alert('Failed to export GPX file. Please try again.');
+          }
+        },
+        
+        importGPX(file) {
+          GPXService.readGPXFile(file)
+            .then(gpxString => {
+              try {
+                const points = GPXService.parseGPX(gpxString);
+                
+                // If there's an existing route, confirm before replacing
+                if (this.state.points.length > 0) {
+                  if (!confirm('This will replace your current route. Continue?')) {
+                    return;
+                  }
+                }
+                
+                // Clear existing route
+                this.clear(false); // false = don't show confirmation
+                
+                // Add imported points
+                this.state.points = points;
+                points.forEach(point => {
+                  this.mapController.addMarker(point);
+                });
+                this.mapController.updatePolyline(points);
+                
+                // Fit map to show the entire route
+                if (points.length > 0) {
+                  this.mapController.map.fitBounds(L.latLngBounds(points));
+                }
+                
+                this._updateDistance();
+                this._saveState();
+                
+                this.uiController.updateUndoClearButtonState(true);
+                this.uiController.updateExportButtonState(true);
+                
+                alert(`Successfully imported route with ${points.length} points.`);
+              } catch (error) {
+                console.error('Failed to parse GPX:', error);
+                alert(`Failed to import GPX file: ${error.message}`);
+              }
+            })
+            .catch(error => {
+              console.error('Failed to read GPX file:', error);
+              alert(`Failed to read GPX file: ${error.message}`);
+            });
+        },
+        
         start() {
           this.state.createMode = true;
           this.mapController.enableClicks(this.addPoint.bind(this));
@@ -403,8 +609,8 @@
           }
         },
         
-        clear() {
-          if (window.confirm('Are you sure you want to clear the entire route?')) {
+        clear(showConfirmation = true) {
+          if (!showConfirmation || window.confirm('Are you sure you want to clear the entire route?')) {
             this.state.points = [];
             this.mapController.clearAllMarkers();
             
@@ -412,6 +618,7 @@
             this._saveState();
             
             this.uiController.updateUndoClearButtonState(false);
+            this.uiController.updateExportButtonState(false);
           }
         },
         
@@ -427,6 +634,9 @@
             DistanceService.formatDistance(distance),
             this.state.units === 'imperial' ? 'mi' : 'km'
           );
+          
+          // Update export button state based on whether there are points
+          this.uiController.updateExportButtonState(this.state.points.length > 0);
         },
         
         _saveState() {
@@ -496,6 +706,9 @@
           createRouteBtn: null,
           undoBtn: null,
           clearBtn: null,
+          exportGpxBtn: null,
+          importGpxBtn: null,
+          gpxFileInput: null,
           unitToggle: null,
           distanceValue: null,
           distanceUnit: null
@@ -506,6 +719,9 @@
           this.elements.createRouteBtn = document.getElementById('create-route-btn');
           this.elements.undoBtn = document.getElementById('undo-btn');
           this.elements.clearBtn = document.getElementById('clear-btn');
+          this.elements.exportGpxBtn = document.getElementById('export-gpx-btn');
+          this.elements.importGpxBtn = document.getElementById('import-gpx-btn');
+          this.elements.gpxFileInput = document.getElementById('gpx-file-input');
           this.elements.unitToggle = document.getElementById('unit-toggle');
           this.elements.distanceValue = document.getElementById('distance-value');
           this.elements.distanceUnit = document.getElementById('distance-unit');
@@ -520,6 +736,9 @@
           this.elements.createRouteBtn.addEventListener('click', this._handleCreateRouteClick.bind(this));
           this.elements.undoBtn.addEventListener('click', this._handleUndoClick.bind(this));
           this.elements.clearBtn.addEventListener('click', this._handleClearClick.bind(this));
+          this.elements.exportGpxBtn.addEventListener('click', this._handleExportGpxClick.bind(this));
+          this.elements.importGpxBtn.addEventListener('click', this._handleImportGpxClick.bind(this));
+          this.elements.gpxFileInput.addEventListener('change', this._handleGpxFileSelected.bind(this));
           this.elements.unitToggle.addEventListener('change', this._handleUnitToggleChange.bind(this));
         },
         
@@ -536,6 +755,10 @@
         updateUndoClearButtonState(enabled) {
           this.elements.undoBtn.disabled = !enabled;
           this.elements.clearBtn.disabled = !enabled;
+        },
+        
+        updateExportButtonState(enabled) {
+          this.elements.exportGpxBtn.disabled = !enabled;
         },
         
         updateDistance(value, unit) {
@@ -565,6 +788,24 @@
         
         _handleUnitToggleChange(e) {
           this.routeController.toggleUnits();
+        },
+        
+        _handleExportGpxClick() {
+          this.routeController.exportGPX();
+        },
+        
+        _handleImportGpxClick() {
+          // Trigger file input click
+          this.elements.gpxFileInput.click();
+        },
+        
+        _handleGpxFileSelected(e) {
+          const file = e.target.files[0];
+          if (file) {
+            this.routeController.importGPX(file);
+            // Reset file input so the same file can be selected again
+            this.elements.gpxFileInput.value = '';
+          }
         }
       };
       
