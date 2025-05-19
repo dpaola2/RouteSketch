@@ -501,9 +501,7 @@
           distanceUnit: null
         },
         
-        init(routeController) {
-          this.routeController = routeController;
-          
+        init() {
           // Cache DOM elements
           this.elements.createRouteBtn = document.getElementById('create-route-btn');
           this.elements.undoBtn = document.getElementById('undo-btn');
@@ -512,13 +510,17 @@
           this.elements.distanceValue = document.getElementById('distance-value');
           this.elements.distanceUnit = document.getElementById('distance-unit');
           
+          return this;
+        },
+        
+        bindEvents(routeController) {
+          this.routeController = routeController;
+          
           // Bind event handlers
           this.elements.createRouteBtn.addEventListener('click', this._handleCreateRouteClick.bind(this));
           this.elements.undoBtn.addEventListener('click', this._handleUndoClick.bind(this));
           this.elements.clearBtn.addEventListener('click', this._handleClearClick.bind(this));
           this.elements.unitToggle.addEventListener('change', this._handleUnitToggleChange.bind(this));
-          
-          return this;
         },
         
         updateCreateButtonState(isActive) {
@@ -572,6 +574,7 @@
         const uiController = UIController.init();
         const routeController = RouteController.init(mapController, uiController);
         
+        // Complete the initialization by passing routeController to uiController
         uiController.init(routeController);
       });
     })();
