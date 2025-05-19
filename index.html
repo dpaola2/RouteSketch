@@ -175,6 +175,37 @@
       cursor: crosshair !important;
     }
     
+    /* Time input styles */
+    .time-input {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .time-input__label {
+      font-size: 14px;
+    }
+
+    .time-input__fields {
+      display: flex;
+      align-items: center;
+    }
+
+    .time-input__field {
+      width: 40px;
+      height: 30px;
+      text-align: center;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px;
+      font-size: 14px;
+    }
+
+    .time-input__separator {
+      margin: 0 2px;
+      font-weight: bold;
+    }
+    
     /* Responsive adjustments */
     @media (max-width: 600px) {
       .toolbar {
@@ -189,6 +220,12 @@
       .distance-display {
         padding: 8px 12px;
         font-size: 14px;
+      }
+      
+      .time-input__field {
+        width: 35px;
+        height: 28px;
+        font-size: 13px;
       }
     }
   </style>
@@ -224,6 +261,16 @@
           <span class="unit-toggle__slider"></span>
         </label>
         <span class="unit-toggle__label">MI</span>
+      </div>
+      <div class="toolbar__row time-input">
+        <label for="time-input" class="time-input__label">Total Time (optional):</label>
+        <div class="time-input__fields">
+          <input type="number" id="hours-input" min="0" max="99" placeholder="hh" class="time-input__field">
+          <span class="time-input__separator">:</span>
+          <input type="number" id="minutes-input" min="0" max="59" placeholder="mm" class="time-input__field">
+          <span class="time-input__separator">:</span>
+          <input type="number" id="seconds-input" min="0" max="59" placeholder="ss" class="time-input__field">
+        </div>
       </div>
     </div>
     
@@ -332,7 +379,7 @@
       // ===== GPXService =====
       // Handles GPX file generation, parsing, and file operations
       const GPXService = {
-        generateGPX(points) {
+        generateGPX(points, totalTimeSeconds = null) {
           if (!points || points.length === 0) {
             return null;
           }
@@ -344,9 +391,19 @@
           gpx += '    <name>RouteSketch Track</name>\n';
           gpx += '    <trkseg>\n';
           
-          // Add track points
-          points.forEach(point => {
-            gpx += `      <trkpt lat="${point.lat}" lon="${point.lng}"></trkpt>\n`;
+          // Calculate timestamps if time is provided
+          let timestamps = null;
+          if (totalTimeSeconds && totalTimeSeconds > 0) {
+            timestamps = this.calculateTimestamps(points, totalTimeSeconds);
+          }
+          
+          // Add track points with timestamps if available
+          points.forEach((point, index) => {
+            gpx += `      <trkpt lat="${point.lat}" lon="${point.lng}">`;
+            if (timestamps) {
+              gpx += `\n        <time>${timestamps[index]}</time>\n      `;
+            }
+            gpx += `</trkpt>\n`;
           });
           
           // Close GPX structure
@@ -355,6 +412,58 @@
           gpx += '</gpx>';
           
           return gpx;
+        },
+        
+        calculateTimestamps(points, totalTimeSeconds) {
+          // Calculate cumulative distances to distribute time proportionally
+          const cumulativeDistances = this.calculateCumulativeDistances(points);
+          const totalDistance = cumulativeDistances[cumulativeDistances.length - 1];
+          
+          // Start time (now)
+          const startTime = new Date();
+          // Subtract total duration to get the start time
+          startTime.setSeconds(startTime.getSeconds() - totalTimeSeconds);
+          
+          // Calculate timestamp for each point
+          return cumulativeDistances.map(distance => {
+            // Calculate time offset based on proportion of total distance
+            const timeOffset = totalDistance > 0 
+              ? Math.round((distance / totalDistance) * totalTimeSeconds) 
+              : 0;
+            
+            // Create timestamp
+            const pointTime = new Date(startTime.getTime());
+            pointTime.setSeconds(pointTime.getSeconds() + timeOffset);
+            
+            // Format as ISO string
+            return pointTime.toISOString();
+          });
+        },
+        
+        calculateCumulativeDistances(points) {
+          if (points.length <= 1) {
+            return [0];
+          }
+          
+          const distances = [0]; // First point is at distance 0
+          let cumulativeDistance = 0;
+          
+          for (let i = 1; i < points.length; i++) {
+            const prevPoint = points[i - 1];
+            const currentPoint = points[i];
+            
+            // Calculate distance between consecutive points
+            const segmentDistance = turf.distance(
+              [prevPoint.lng, prevPoint.lat],
+              [currentPoint.lng, currentPoint.lat],
+              { units: 'kilometers' }
+            );
+            
+            cumulativeDistance += segmentDistance;
+            distances.push(cumulativeDistance);
+          }
+          
+          return distances;
         },
         
         parseGPX(gpxString) {
@@ -499,7 +608,8 @@
           points: [],
           distanceMeters: 0,
           units: 'imperial', // 'imperial' for miles, 'metric' for kilometers
-          createMode: false
+          createMode: false,
+          totalTimeSeconds: null // New state property for time tracking
         },
         
         init(mapController, uiController) {
@@ -519,12 +629,31 @@
           }
           
           try {
-            const gpxString = GPXService.generateGPX(this.state.points);
+            // Pass total time to GPX generator
+            const gpxString = GPXService.generateGPX(
+              this.state.points, 
+              this.state.totalTimeSeconds
+            );
             GPXService.downloadGPX(gpxString);
           } catch (error) {
             console.error('Failed to export GPX:', error);
             alert('Failed to export GPX file. Please try again.');
           }
+        },
+        
+        updateTotalTime(hours, minutes, seconds) {
+          // Convert to total seconds or null if all values are empty/zero
+          if ((hours || minutes || seconds) && 
+              (Number(hours) > 0 || Number(minutes) > 0 || Number(seconds) > 0)) {
+            this.state.totalTimeSeconds = 
+              (Number(hours) * 3600) + 
+              (Number(minutes) * 60) + 
+              Number(seconds);
+          } else {
+            this.state.totalTimeSeconds = null;
+          }
+          
+          this._saveState();
         },
         
         importGPX(file) {
@@ -612,6 +741,7 @@
         clear(showConfirmation = true) {
           if (!showConfirmation || window.confirm('Are you sure you want to clear the entire route?')) {
             this.state.points = [];
+            this.state.totalTimeSeconds = null; // Clear time data
             this.mapController.clearAllMarkers();
             
             this._updateDistance();
@@ -619,6 +749,7 @@
             
             this.uiController.updateUndoClearButtonState(false);
             this.uiController.updateExportButtonState(false);
+            this.uiController.clearTimeInputs(); // Clear time input fields
           }
         },
         
@@ -645,7 +776,8 @@
           
           try {
             sessionStorage.setItem('routeSketch', JSON.stringify({
-              points: pointsForStorage
+              points: pointsForStorage,
+              totalTimeSeconds: this.state.totalTimeSeconds
             }));
           } catch (e) {
             console.error('Failed to save route to sessionStorage:', e);
@@ -672,11 +804,17 @@
             console.error('Failed to restore unit preference:', e);
           }
           
-          // Restore route points
+          // Restore route points and time data
           try {
             const savedState = sessionStorage.getItem('routeSketch');
             if (savedState) {
               const parsed = JSON.parse(savedState);
+              
+              // Restore time data if available
+              if (parsed.totalTimeSeconds) {
+                this.state.totalTimeSeconds = parsed.totalTimeSeconds;
+                this.uiController.updateTimeInputs(this.state.totalTimeSeconds);
+              }
               
               if (parsed.points && Array.isArray(parsed.points)) {
                 // Convert plain objects back to LatLng objects
@@ -711,7 +849,10 @@
           gpxFileInput: null,
           unitToggle: null,
           distanceValue: null,
-          distanceUnit: null
+          distanceUnit: null,
+          hoursInput: null,
+          minutesInput: null,
+          secondsInput: null
         },
         
         init() {
@@ -725,6 +866,9 @@
           this.elements.unitToggle = document.getElementById('unit-toggle');
           this.elements.distanceValue = document.getElementById('distance-value');
           this.elements.distanceUnit = document.getElementById('distance-unit');
+          this.elements.hoursInput = document.getElementById('hours-input');
+          this.elements.minutesInput = document.getElementById('minutes-input');
+          this.elements.secondsInput = document.getElementById('seconds-input');
           
           return this;
         },
@@ -740,6 +884,11 @@
           this.elements.importGpxBtn.addEventListener('click', this._handleImportGpxClick.bind(this));
           this.elements.gpxFileInput.addEventListener('change', this._handleGpxFileSelected.bind(this));
           this.elements.unitToggle.addEventListener('change', this._handleUnitToggleChange.bind(this));
+          
+          // Bind time input events
+          this.elements.hoursInput.addEventListener('change', this._handleTimeInputChange.bind(this));
+          this.elements.minutesInput.addEventListener('change', this._handleTimeInputChange.bind(this));
+          this.elements.secondsInput.addEventListener('change', this._handleTimeInputChange.bind(this));
         },
         
         updateCreateButtonState(isActive) {
@@ -806,6 +955,35 @@
             // Reset file input so the same file can be selected again
             this.elements.gpxFileInput.value = '';
           }
+        },
+        
+        updateTimeInputs(totalSeconds) {
+          if (totalSeconds === null) {
+            this.clearTimeInputs();
+            return;
+          }
+          
+          const hours = Math.floor(totalSeconds / 3600);
+          const minutes = Math.floor((totalSeconds % 3600) / 60);
+          const seconds = totalSeconds % 60;
+          
+          this.elements.hoursInput.value = hours;
+          this.elements.minutesInput.value = minutes;
+          this.elements.secondsInput.value = seconds;
+        },
+        
+        clearTimeInputs() {
+          this.elements.hoursInput.value = '';
+          this.elements.minutesInput.value = '';
+          this.elements.secondsInput.value = '';
+        },
+        
+        _handleTimeInputChange() {
+          const hours = this.elements.hoursInput.value || 0;
+          const minutes = this.elements.minutesInput.value || 0;
+          const seconds = this.elements.secondsInput.value || 0;
+          
+          this.routeController.updateTotalTime(hours, minutes, seconds);
         }
       };
       
